@@ -502,7 +502,7 @@ class BaseNode(AutoSshContainerMixin):  # pylint: disable=too-many-instance-attr
     def _proposed_scylla_yaml_properties(self) -> dict:
         node_params_builder = ScyllaYamlNodeAttrBuilder(params=self.parent_cluster.params, node=self)
         certificate_params_builder = ScyllaYamlCertificateAttrBuilder(params=self.parent_cluster.params, node=self)
-        return node_params_builder.dict(exclude_none=True) | certificate_params_builder.dict(exclude_none=True)
+        return node_params_builder.model_dump(exclude_none=True) | certificate_params_builder.model_dump(exclude_none=True)
 
     @property
     def proposed_scylla_yaml(self) -> ScyllaYaml:
@@ -1651,7 +1651,7 @@ class BaseNode(AutoSshContainerMixin):  # pylint: disable=too-many-instance-attr
                 return
             scylla_yaml.clear()
             scylla_yaml.update(
-                new_scylla_yaml.dict(
+                new_scylla_yaml.model_dump(
                     exclude_none=True, exclude_unset=True, exclude_defaults=True,
                     # NOTE: explicit fields included into yaml no matter what,
                     #  they are needed for nodetool to operate properly
@@ -1705,10 +1705,6 @@ class BaseNode(AutoSshContainerMixin):  # pylint: disable=too-many-instance-attr
                 self.parent_cluster.proposed_scylla_yaml,
                 self.proposed_scylla_yaml
             )
-
-        # TODO: remove when https://github.com/scylladb/scylla-machine-image/issues/484 gets fixed
-        with self.remote_scylla_yaml() as scylla_yml:
-            scylla_yml.experimental = None
 
         self.process_scylla_args(append_scylla_args)
 
@@ -4065,7 +4061,7 @@ class BaseScyllaCluster:  # pylint: disable=too-many-public-methods, too-many-in
             test_config=self.test_config,
             msldap_server_info=KeyStore().get_ldap_ms_ad_credentials()
         )
-        return ScyllaYaml(**cluster_params_builder.dict(exclude_unset=True, exclude_none=True))
+        return ScyllaYaml(**cluster_params_builder.model_dump(exclude_unset=True, exclude_none=True))
 
     @property
     def connection_bundle_file(self) -> Path | None:
