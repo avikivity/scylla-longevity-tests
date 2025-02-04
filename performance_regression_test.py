@@ -809,9 +809,7 @@ class PerformanceRegressionUpgradeTest(PerformanceRegressionTest, UpgradeTest): 
 
     @latency_calculator_decorator(legend="Upgrade Node")
     def upgrade_node(self, node):  # pylint: disable=arguments-differ
-        InfoEvent(message='Upgrade Node %s begin' % node.name).publish()
         self._upgrade_node(node)
-        InfoEvent(message='Upgrade Node %s ended' % node.name).publish()
 
     def _stop_stress_when_finished(self):  # pylint: disable=no-self-use
         with EventsSeverityChangerFilter(new_severity=Severity.NORMAL,  # killing stress creates Critical error
