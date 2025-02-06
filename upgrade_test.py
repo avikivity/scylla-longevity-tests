@@ -362,7 +362,7 @@ class UpgradeTest(FillDatabaseData, loader_utils.LoaderUtilsMixin):
         InfoEvent(message='upgrade_node - ended to "get_db_nodes_cpu_mode"').publish()
         result = node.remoter.run('scylla --version')
         new_ver = result.stdout.strip()
-        assert self.orig_ver != new_ver, "scylla-server version isn't changed"
+        assert self.orig_ver != new_ver, "scylla-server version didn't change during upgrade"
         self.new_ver = new_ver
         InfoEvent(message='upgrade_node - starting to "_update_argus_upgraded_version"').publish()
         self._update_argus_upgraded_version(node, new_ver)
@@ -447,7 +447,7 @@ class UpgradeTest(FillDatabaseData, loader_utils.LoaderUtilsMixin):
         node.start_scylla_server(verify_up_timeout=500)
 
         InfoEvent(message='original scylla-server version is %s, latest: %s' % (orig_ver, new_ver)).publish()
-        assert orig_ver != new_ver, "scylla-server version isn't changed"
+        assert orig_ver != new_ver, "scylla-server version didn't change during rollback"
 
         if upgrade_sstables:
             self.upgradesstables_if_command_available(node)
