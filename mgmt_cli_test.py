@@ -274,16 +274,29 @@ class StressLoadOperations(ClusterTester, LoaderUtilsMixin):
 class ClusterOperations(ClusterTester):
     CLUSTER_NAME = "mgr_cluster1"
 
-    def ensure_and_get_cluster(self, manager_tool, force_add: bool = False):
+    def ensure_and_get_cluster(self, manager_tool, force_add: bool = False, **add_cluster_extra_params):
         """Get the cluster if it is already added, otherwise add it to manager.
+
         Use force_add=True if you want to re-add the cluster (delete and add again) even if it already added.
+        Use add_cluster_extra_params to pass additional parameters (like 'client_encrypt') to the add_cluster method.
         """
         mgr_cluster = manager_tool.get_cluster(cluster_name=self.CLUSTER_NAME)
+
         if not mgr_cluster or force_add:
             if mgr_cluster:
                 mgr_cluster.delete()
-            mgr_cluster = manager_tool.add_cluster(name=self.CLUSTER_NAME, db_cluster=self.db_cluster,
-                                                   auth_token=self.monitors.mgmt_auth_token)
+
+            add_cluster_params = {}
+            add_cluster_params.update(
+                name=self.CLUSTER_NAME,
+                db_cluster=self.db_cluster,
+                auth_token=self.monitors.mgmt_auth_token,
+                force_non_ssl_session_port=manager_tool.is_force_non_ssl_session_port(db_cluster=self.db_cluster),
+            )
+            add_cluster_params.update(add_cluster_extra_params)
+
+            mgr_cluster = manager_tool.add_cluster(**add_cluster_params)
+
         return mgr_cluster
 
     def get_cluster_hosts_ip(self):
@@ -1250,18 +1263,21 @@ class ManagerHealthCheckTests(ManagerTestFunctionsMixIn):
 
 class ManagerEncryptionTests(ManagerTestFunctionsMixIn):
 
+    def _disable_client_encryption(self) -> None:
+        for node in self.db_cluster.nodes:
+            with node.remote_scylla_yaml() as scylla_yml:
+                scylla_yml.client_encryption_options.enabled = False
+            node.restart_scylla()
+
     def test_client_encryption(self):
         self.log.info('starting test_client_encryption')
+
+        self.log.info('ENABLED client encryption checks')
+        if not self.db_cluster.nodes[0].is_client_encrypt:
+            self.db_cluster.enable_client_encrypt()
+
         manager_node = self.monitors.nodes[0]
         manager_tool = mgmt.get_scylla_manager_tool(manager_node=manager_node)
-        mgr_cluster = self.ensure_and_get_cluster(manager_tool)
-        dict_host_health = mgr_cluster.get_hosts_health()
-        for host_health in dict_host_health.values():
-            assert host_health.ssl == HostSsl.OFF, "Not all hosts ssl is 'OFF'"
-
-        healthcheck_task = mgr_cluster.get_healthcheck_task()
-
-        self.db_cluster.enable_client_encrypt()
 
         self.log.info("Create and send client TLS certificate/key to the manager node")
         manager_node.create_node_certificate(cert_file=manager_node.ssl_conf_dir / TLSAssets.CLIENT_CERT,
@@ -1269,24 +1285,29 @@ class ManagerEncryptionTests(ManagerTestFunctionsMixIn):
         manager_node.remoter.run(f'mkdir -p {mgmt.cli.SSL_CONF_DIR}')
         manager_node.remoter.send_files(src=str(manager_node.ssl_conf_dir) + '/', dst=str(mgmt.cli.SSL_CONF_DIR))
 
-        # SM caches scylla nodes configuration and the healthcheck svc is independent from the cache updates.
-        # Cache is being updated periodically, every 1 minute following the manager config for SCT.
-        # We need to wait until SM is aware about the configuration change.
-        mgr_cluster.update(
-            client_encrypt=True,
-            force_non_ssl_session_port=mgr_cluster.sctool.is_minimum_3_2_6_or_snapshot
-        )
-        time.sleep(90)
+        mgr_cluster = self.ensure_and_get_cluster(manager_tool, force_add=True, client_encrypt=True)
 
+        healthcheck_task = mgr_cluster.get_healthcheck_task()
         healthcheck_task.wait_for_status(list_status=[TaskStatus.DONE], step=5, timeout=240)
-        sleep = 40
-        self.log.debug('Sleep {} seconds, waiting for health-check task to run by schedule on first time'.format(sleep))
-        time.sleep(sleep)
         self.log.debug("Health-check task history is: {}".format(healthcheck_task.history))
+
         dict_host_health = mgr_cluster.get_hosts_health()
         for host_health in dict_host_health.values():
             assert host_health.ssl == HostSsl.ON, "Not all hosts ssl is 'ON'"
             assert host_health.status == HostStatus.UP, "Not all hosts status is 'UP'"
+
+        self.log.info('DISABLED client encryption checks')
+        self._disable_client_encryption()
+        # SM caches scylla nodes configuration and the healthcheck svc is independent on the cache updates.
+        # Cache is being updated periodically, every 1 minute following the manager config for SCT.
+        # We need to wait until SM is aware about the configuration change.
+        sleep_time = 90
+        self.log.debug('Sleep %s seconds, waiting for SM is aware about the configuration change', sleep_time)
+        time.sleep(sleep_time)
+
+        dict_host_health = mgr_cluster.get_hosts_health()
+        for host_health in dict_host_health.values():
+            assert host_health.ssl == HostSsl.OFF, "Not all hosts ssl is 'OFF'"
 
         mgr_cluster.delete()  # remove cluster at the end of the test
         self.log.info('finishing test_client_encryption')
@@ -1597,8 +1618,7 @@ class ManagerInstallationTests(ManagerTestFunctionsMixIn):
         self.log.info("Got Manager's version: %s", manager_tool.sctool.version)
 
         # Add cluster and verify hosts health
-        mgr_cluster = manager_tool.add_cluster(name=self.CLUSTER_NAME, db_cluster=self.db_cluster,
-                                               auth_token=self.monitors.mgmt_auth_token)
+        mgr_cluster = self.ensure_and_get_cluster(manager_tool)
         dict_host_health = mgr_cluster.get_hosts_health()
         for host_health in dict_host_health.values():
             assert host_health.status == HostStatus.UP, "Host status is not 'UP'"
